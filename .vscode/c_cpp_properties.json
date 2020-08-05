@@ -4,7 +4,9 @@
             "name": "Linux",
             "includePath": [
                 "/home/cabantous/.arduino15/packages/esp8266/tools/**",
-                "/home/cabantous/.arduino15/packages/esp8266/hardware/esp8266/2.6.3/**"
+                "/home/cabantous/.arduino15/packages/esp8266/hardware/esp8266/2.6.3/**",
+                "/Users/christophercabantous/Library/Arduino15/packages/esp8266/hardware/esp8266/2.7.4/**",
+                "/Users/christophercabantous/Library/Arduino15/packages/esp8266/tools/**"
             ],
             "forcedInclude": [],
             "intelliSenseMode": "gcc-x64",

@@ -15,10 +15,18 @@ float fmap(float x, float in_min, float in_max, float out_min, float out_max);
 void securitySystemAwayArm();
 void securitySystemDisarmed();
 
+char checkChargingState();
+char checkShutterState();
+char checkLowbattery();
+
 float Vbat = 0.0;
 
-int startAddr = 0;
-char prevState[2] = "0";
+char startAddrSecuritySystemState = 0;
+char startAddrShutterState = 1;
+char startAddrLowBatteryState = 2;
+char startAddrChargingState = 3;
+
+char prevStateSecuritySystem = '0';
 
 #define durationSleep 30 // secondes
 #define NB_TRYWIFI 50    // nbr d'essai connexion WiFi, number of try to connect WiFi
@@ -31,16 +39,30 @@ void tick()
 
 void setup()
 {
+    char prevStateShutter = '0';
+    char prevStateLowBattery = '0';
+    char prevStateCharging = '0';
+
+    char CurrentStateShutter = '0';
+    char CurrentStateLowBattery = '0';
+    char CurrentStateCharging = '0';
+
     pinMode(2, OUTPUT);
+    pinMode(5, INPUT);  // Shutter State
+    pinMode(3, INPUT);  // Charging State
+    pinMode(4, OUTPUT); // Speeker
     ticker.attach(0.5, tick);
     Serial.begin(115200);
     Serial.println("\n[Serial] Initialized");
     EEPROM.begin(512);
     Serial.println("[EEPROM] Initialized");
-    Serial.println("[EEPROM] Size : " + String(EEPROM.length()));
 
-    Serial.println("[PowerManagement] Reason startup :");
-    Serial.println(ESP.getResetReason());
+    prevStateShutter = (EEPROM.read(startAddrShutterState));
+    prevStateLowBattery = (EEPROM.read(startAddrLowBatteryState));
+    prevStateCharging = (EEPROM.read(startAddrChargingState));
+
+    Serial.println("[PowerManagement] Reason startup : ");
+    Serial.print(ESP.getResetReason());
 
     WiFi.begin(ssid, password);
 
@@ -56,7 +78,7 @@ void setup()
             ESP.deepSleep(durationSleep * 1000000);
         }
     }
-    Serial.println("[WiFi] Connected to the WiFi network");
+    Serial.println("\n[WiFi] Connected to the WiFi network");
     Serial.print("[WiFi] IP address: ");
     Serial.println(WiFi.localIP());
 
@@ -84,35 +106,51 @@ void setup()
     Serial.println("[MQTT] Sub to setTargetState");
     MQTT.subscribe("setTargetState/", 1);
 
-    Vbat = fmap(analogRead(A0), 0, 1024, 0.0, 3.3);
-    Serial.println(Vbat);
+    CurrentStateLowBattery = checkLowbattery();
+    CurrentStateShutter = checkShutterState();
+    CurrentStateCharging = checkChargingState();
 
-    // Check battery voltage
-    if (Vbat < 2.5)
+    if (CurrentStateLowBattery == prevStateLowBattery)
     {
-        MQTT.publish("contactSensor/getStatusLowBattery/chris", "1");
-        Serial.println("[BatteryState] Send notification about Low Battery");
+        Serial.println("[LowBattery] No Change ");
     }
     else
     {
-        MQTT.publish("contactSensor/getStatusLowBattery/chris", "0");
-        Serial.println("[BatteryState] Send notification about Battery");
+        Serial.println("[LowBattery] Change");
+        EEPROM.write(startAddrLowBatteryState, CurrentStateLowBattery);
+        EEPROM.commit();
+
+        if (CurrentStateLowBattery == '0')
+        {
+            MQTT.publish("contactSensor/getStatusLowBattery/chris", "0");
+        }
+        else
+        {
+            MQTT.publish("contactSensor/getStatusLowBattery/chris", "1");
+        }
     }
 
-    // Check current state of contactSensor
-
-    if (digitalRead(5) == 0)
+    if (CurrentStateShutter == prevStateShutter)
     {
-        Serial.println("[State] Volet Fermés");
-        MQTT.publish("contactSensor/getContactSensorState/chris", "0");
+        Serial.println("[ShutterState] No Change");
     }
     else
     {
-        Serial.println("[State] Volet Ouverts");
-        MQTT.publish("contactSensor/getContactSensorState/chris", "1");
+        Serial.println("[ShutterState] Change");
+        EEPROM.write(startAddrShutterState, CurrentStateShutter);
+        EEPROM.commit();
+
+        if (CurrentStateShutter == '0')
+        {
+            MQTT.publish("contactSensor/getContactSensorState/chris", "0");
+        }
+        else
+        {
+            MQTT.publish("contactSensor/getContactSensorState/chris", "1");
+        }
     }
 
-    // Check retain message
+    // Check retained message
 
     for (int i = 0; i < 10; i++)
     {
@@ -131,12 +169,12 @@ void loop()
 void callback(char *topic, byte *payload, unsigned int length)
 {
     char msg[10];
-    char currentState[2] = "0";
+    char currentState = '0';
     int i = 0;
     Serial.print("[MQTT Callback] Message arrived in topic: ");
     Serial.println(topic);
 
-    Serial.print("[MQTT Callback] Message:");
+    Serial.print("[MQTT Callback] Message : ");
     for (i = 0; i < length; i++)
     {
         Serial.print((char)payload[i]);
@@ -146,25 +184,21 @@ void callback(char *topic, byte *payload, unsigned int length)
 
     msg[i] = '\0';
 
-    prevState[0] = (EEPROM.read(startAddr));
-    Serial.print("[EEPROM] Previous State : ");
-    Serial.println(prevState);
+    prevStateSecuritySystem = (EEPROM.read(startAddrSecuritySystemState));
 
     if (strcmp(msg, "Disarmed") == 0)
     {
-        currentState[0] = '0';
+        currentState = '0';
         Serial.println("[MQTT Callback] currentState is Disarmed");
     }
 
     if (strcmp(msg, "AwayArm") == 0)
     {
-        currentState[0] = '1';
+        currentState = '1';
         Serial.println("[MQTT Callback]currentState is AwayArm");
     }
 
-    Serial.println(currentState);
-
-    if (strcmp(prevState, currentState) == 0)
+    if (prevStateSecuritySystem == currentState)
     {
         Serial.println("[MQTT Callback] No change");
     }
@@ -172,9 +206,9 @@ void callback(char *topic, byte *payload, unsigned int length)
     else
     {
         Serial.println("[MQTT Callback] Change");
-        EEPROM.write(startAddr, currentState[0]);
+        EEPROM.write(startAddrSecuritySystemState, currentState);
         EEPROM.commit();
-        if (strcmp(currentState, "1") == 0)
+        if (currentState == '1')
         {
             MQTT.publish("getCurrentState/", "AwayArm");
             securitySystemAwayArm();
@@ -216,4 +250,44 @@ void securitySystemDisarmed()
     analogWrite(4, 512);
     delay(200);
     analogWrite(4, 0);
+}
+
+char checkLowbattery()
+{
+    Vbat = fmap(analogRead(A0), 0, 1024, 0.0, 3.3);
+    Serial.print("[LowBattery] Voltage : ");
+    Serial.println(Vbat);
+
+    if (Vbat < 2.5)
+    {
+        return '1';
+    }
+    else
+    {
+        return '0';
+    }
+}
+
+char checkShutterState()
+{
+    if (digitalRead(5) == 0)
+    {
+        return '0';
+    }
+    else
+    {
+        return '1';
+    }
+}
+
+char checkChargingState()
+{
+    if (digitalRead(3) == 0)
+    {
+        return '0';
+    }
+    else
+    {
+        return '1';
+    }
 }
